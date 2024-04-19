@@ -1,114 +1,45 @@
-use audio::{DeviceSelector, Streamer};
-use glfw::Context;
-use util::GenericResult;
+use std::sync::mpsc;
 
-mod audio;
+use game::Game;
+use util::DeltaTimer;
+
+mod game;
 mod render;
 mod util;
 
-fn main() -> GenericResult<()> {
-    let mut audio_device_selector = DeviceSelector::new(false);
-    let mut audio = Streamer::begin(&audio_device_selector)?;
+fn main() {
+    // Initialize render engine
+    let mut renderer = render::renderer::Renderer::new();
 
-    // Initialize GLFW
-    let mut glfw = glfw::init(glfw::fail_on_errors).unwrap();
+    let mut game = Game::init(&mut renderer);
 
-    glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
-    glfw.window_hint(glfw::WindowHint::OpenGlProfile(
-        glfw::OpenGlProfileHint::Core,
-    ));
-    glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
+    // renderer.debug_nontransparent_clear = true;
 
-    glfw.window_hint(glfw::WindowHint::Floating(false));
-    glfw.window_hint(glfw::WindowHint::TransparentFramebuffer(true));
+    // Initialize delta time
+    let mut delta_timer = DeltaTimer::new();
 
-    let (mut window, events) = glfw
-        .create_window(1024, 1024, "spexia viewer :3", glfw::WindowMode::Windowed)
-        .expect("Failed to create GLFW window");
-
-    window.make_current();
-    glfw.set_swap_interval(glfw::SwapInterval::Sync(1));
-
-    // Initialize OpenGL
-    gl::load_with(|symbol| window.get_proc_address(symbol) as *const _);
-
-    unsafe {
-        gl::Viewport(0, 0, 1024, 1024);
-        gl::ClearColor(0.0, 0.0, 0.0, 0.0);
-        gl::Disable(gl::DEPTH_TEST);
-        gl::Enable(gl::BLEND);
-        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-        gl::BlendEquation(gl::FUNC_ADD);
-    }
-
-    let mut h = render::H::new(window.get_size().1);
-
-    window.set_key_polling(true);
-    window.set_size_polling(true);
-
-    let mut fullscreen = false;
+    let (ev_send, ev_recv) = mpsc::channel();
 
     // Render loop
-    while !window.should_close() {
-        // Poll stuff.
-        glfw.poll_events();
-        if audio_device_selector.poll_device_has_changed(audio.did_lose_device()) {
-            audio.update_stream(&audio_device_selector);
-        }
+    while game.running(&renderer) {
+        renderer.handle_events(&ev_send);
 
-        // Pass audio data to renderer/visualizer
-        while let Some(k) = audio.data.lock().unwrap().take() {
-            h.set_wave(&k);
-        }
-
-        // Obvious
-        unsafe {
-            h.draw();
-        }
-
-        // Handle events
-        while let Some((_, ev)) = events.receive() {
+        while let Ok((window_id, ev)) = ev_recv.try_recv() {
             match ev {
-                glfw::WindowEvent::Key(key, _scancode, action, _modifiers) => {
-                    if let glfw::Action::Press = action {
-                        match key {
-                            glfw::Key::D => {
-                                let is_decorated = window.is_decorated();
-                                window.set_decorated(!is_decorated);
-                            }
-                            glfw::Key::F => {
-                                fullscreen = !fullscreen;
-                                if fullscreen {
-                                    window.set_decorated(false);
-                                    window.maximize();
-                                } else {
-                                    window.set_decorated(true);
-                                    window.restore();
-                                }
-                            }
-                            glfw::Key::T => {
-                                let is_floating = window.is_floating();
-                                window.set_floating(!is_floating);
-                                h.window_is_floating = window.is_floating();
-                            }
-                            _ => {}
-                        }
-                    }
+                glfw::WindowEvent::Key(key, _scancode, action, modifiers) => {
+                    game.on_key(&mut renderer, window_id, key, action, modifiers)
                 }
-                glfw::WindowEvent::Size(width, height) => {
-                    unsafe {
-                        gl::Viewport(0, 0, width, height);
-                    }
-                    h.window_height = height;
-                    h.aspect = height as f32 / width as f32;
+                glfw::WindowEvent::MouseButton(mouse_button, action, modifiers) => {
+                    game.on_mouse(&mut renderer, window_id, mouse_button, action, modifiers)
+                }
+                glfw::WindowEvent::CursorPos(x, y) => {
+                    game.on_cursor_pos(&mut renderer, window_id, (x, y))
                 }
                 _ => {}
             }
         }
-
-        // Finish frame
-        window.swap_buffers();
+        game.update(delta_timer.tick());
+        game.update_for_render(&mut renderer);
+        renderer.render();
     }
-
-    Ok(())
 }

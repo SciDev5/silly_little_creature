@@ -1,6 +1,13 @@
-use std::{ffi::CString, fmt::Display};
+use std::{
+    ffi::{c_void, CString},
+    fmt::Display,
+};
 
 use gl::types::{GLchar, GLenum, GLint, GLuint, GLvoid};
+
+use crate::util::Vec2I;
+
+use super::image_asset::ImageAsset;
 
 #[derive(Debug, Clone, Copy)]
 pub enum GLShaderType {
@@ -175,58 +182,33 @@ pub struct GLTexPixel {
 }
 impl Default for GLTexPixel {
     fn default() -> Self {
-        Self { r: 0, g: 0, b: 0, a: 0 }
+        Self {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        }
     }
 }
-pub struct GLTexture2d<const W: usize, const H: usize> {
+pub struct GLTexture2d {
     ref_id: GLuint,
+    dims: Vec2I,
 }
-impl<const W: usize, const H: usize> GLTexture2d<W, H> {
-    pub fn new() -> Self {
-        let data: Box<[[GLTexPixel; W]; H]> = vec![
-            [GLTexPixel {
-                r: 0,
-                g: 0,
-                b: 0,
-                a: 0,
-            }; W];
-            H
-        ]
-        .try_into()
-        .unwrap();
-
-        // for x in 0..W {
-        //     for y in 0..H {
-        //         data[y][x] = GLTexPixel {
-        //             r: (x as f32 / W as f32 * 256.0) as u8,
-        //             g: (y as f32 / H as f32 * 256.0) as u8,
-        //             b: ((x + y) as f32 / H as f32 * 256.0) as u8,
-        //             a: 0,
-        //         }
-        //     }
-        // }
-
+impl GLTexture2d {
+    pub fn new(image_asset: &ImageAsset) -> Self {
         let mut ref_id = 0;
-
         unsafe {
             gl::GenTextures(1, &mut ref_id);
             gl::BindTexture(gl::TEXTURE_2D, ref_id);
-            gl::TexImage2D(
-                gl::TEXTURE_2D,
-                0,
-                gl::RGBA as GLint,
-                W as GLint,
-                H as GLint,
-                0,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                data.as_ptr() as *const GLvoid,
-            );
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as GLint);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as GLint);
         }
-
-        Self { ref_id }
+        let mut s = Self {
+            ref_id,
+            dims: Vec2I::new(0, 0),
+        };
+        s.data_from_imageasset(image_asset);
+        s
     }
     pub fn bind(&self, slot: GLTextureSlot, location: GLint) {
         unsafe {
@@ -256,8 +238,36 @@ impl<const W: usize, const H: usize> GLTexture2d<W, H> {
             )
         }
     }
+    pub fn data_from_color(&self, color: GLTexPixel) {
+        self.tex_image_2d(
+            vec![color; self.dims.x as usize * self.dims.y as usize].as_ptr() as *const GLvoid,
+        );
+    }
+    pub fn data_from_imageasset(&mut self, data: &ImageAsset) {
+        self.dims = data.get_dimensions();
+        self.tex_image_2d(data.pixels().as_ptr() as *const GLvoid);
+    }
+    fn tex_image_2d(&self, data: *const GLvoid) {
+        unsafe {
+            gl::BindTexture(gl::TEXTURE_2D, self.ref_id);
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                gl::RGBA as GLint,
+                self.dims.x,
+                self.dims.y,
+                0,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                data,
+            )
+        }
+    }
+    pub fn get_dimensions(&self) -> Vec2I {
+        self.dims
+    }
 }
-impl<const W: usize, const H: usize> Drop for GLTexture2d<W, H> {
+impl Drop for GLTexture2d {
     fn drop(&mut self) {
         unsafe { gl::DeleteTextures(1, &self.ref_id) }
     }
@@ -274,6 +284,130 @@ impl GLTextureSlot {
     fn gl_int(&self) -> GLint {
         match self {
             Self::Tex0 => 0,
+        }
+    }
+}
+
+pub struct TriPosVO<const N: usize> {
+    tris: [[[f32; 2]; 3]; N],
+    vbo: gl::types::GLuint,
+    vao: gl::types::GLuint,
+}
+impl<const N: usize> TriPosVO<N> {
+    pub fn new(tris: [[[f32; 2]; 3]; N]) -> Self {
+        let mut self_ = Self {
+            vbo: 0,
+            vao: 0,
+            tris,
+        };
+        // Create and bind the vertex buffer
+        unsafe {
+            gl::GenBuffers(1, &mut self_.vbo);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self_.vbo);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (N * (3 * 2) * std::mem::size_of::<gl::types::GLfloat>()) as gl::types::GLsizeiptr,
+                &self_.tris[0][0][0] as *const f32 as *const c_void,
+                gl::STATIC_DRAW,
+            );
+        }
+
+        // Create and bind the vertex array object
+        unsafe {
+            gl::GenVertexArrays(1, &mut self_.vao);
+            gl::BindVertexArray(self_.vao);
+            gl::VertexAttribPointer(
+                0,
+                2,
+                gl::FLOAT,
+                gl::FALSE,
+                (2 * std::mem::size_of::<gl::types::GLfloat>()) as gl::types::GLsizei,
+                std::ptr::null(),
+            );
+            gl::EnableVertexAttribArray(0);
+        }
+
+        self_
+    }
+    pub fn bind(&self) {
+        unsafe {
+            gl::BindVertexArray(self.vao);
+        }
+    }
+}
+impl<const N: usize> Drop for TriPosVO<N> {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteBuffers(1, &self.vbo);
+            gl::DeleteVertexArrays(1, &self.vao);
+        }
+    }
+}
+
+pub struct F32VO<const N: usize, const S: usize> {
+    vbo: gl::types::GLuint,
+    vao: gl::types::GLuint,
+    pub data: [[f32; S]; N],
+}
+impl<const L: usize, const S: usize> F32VO<L, S> {
+    pub fn new(data: [[f32; S]; L]) -> Self {
+        let mut self_ = Self {
+            vbo: 0,
+            vao: 0,
+            data,
+        };
+        // Create and bind the vertex buffer
+        unsafe {
+            gl::GenBuffers(1, &mut self_.vbo);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self_.vbo);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (L * S * std::mem::size_of::<gl::types::GLfloat>()) as gl::types::GLsizeiptr,
+                &data[0] as *const f32 as *const c_void,
+                gl::STATIC_DRAW,
+            );
+        }
+
+        // Create and bind the vertex array object
+        unsafe {
+            gl::GenVertexArrays(1, &mut self_.vao);
+            gl::BindVertexArray(self_.vao);
+            gl::VertexAttribPointer(
+                0,
+                S as gl::types::GLint,
+                gl::FLOAT,
+                gl::FALSE,
+                (S * std::mem::size_of::<gl::types::GLfloat>()) as gl::types::GLsizei,
+                std::ptr::null(),
+            );
+            gl::EnableVertexAttribArray(0);
+        }
+
+        self_
+    }
+    pub fn update(&self) {
+        unsafe {
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (L * S * std::mem::size_of::<gl::types::GLfloat>()) as gl::types::GLsizeiptr,
+                &self.data[0] as *const f32 as *const c_void,
+                gl::STATIC_DRAW,
+            );
+        }
+    }
+    pub fn bind(&self) {
+        unsafe {
+            gl::BindVertexArray(self.vao);
+            gl::EnableVertexAttribArray(0);
+        }
+    }
+}
+impl<const L: usize, const S: usize> Drop for F32VO<L, S> {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteBuffers(1, &self.vbo);
+            gl::DeleteVertexArrays(1, &self.vao);
         }
     }
 }
