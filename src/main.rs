@@ -3,6 +3,7 @@ use std::sync::mpsc;
 use game::Game;
 use util::DeltaTimer;
 
+mod aware;
 mod game;
 mod render;
 mod util;

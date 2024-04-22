@@ -1,6 +1,6 @@
 use std::{any::Any, collections::HashMap, marker::PhantomData, mem, sync::mpsc};
 
-use crate::util::Vec2I;
+use crate::util::{RectI, Vec2I};
 use glfw::Context;
 
 pub trait Renderable {
@@ -83,6 +83,10 @@ impl RenderWindow {
         renderer: &Renderer,
         renderables: impl Iterator<Item = &'a Box<dyn Renderable>>,
     ) {
+        if !self.window.is_current() {
+            self.window.make_current();
+        }
+
         // do OpenGL rendering stuff
         unsafe {
             // Clear the screen
@@ -153,14 +157,18 @@ impl RenderWindowId {
         renderer.windows.contains_key(&self.0)
     }
 
-    pub fn set_location(self, renderer: &mut Renderer, pos: Vec2I, dim: Vec2I) {
+    pub fn set_location(self, renderer: &mut Renderer, rect: RectI) {
         let screen_origin = renderer.screen_origin;
         let Some(window) = renderer.windows.get_mut(&self.0) else { return; };
-        let real_pos = screen_origin + pos;
-        window.window.set_pos(real_pos.x, real_pos.y);
-        window.window.set_size(dim.x, dim.y);
-        window.pos = real_pos;
-        window.dim = dim;
+        let real_pos = screen_origin + rect.pos;
+        if window.pos != real_pos {
+            window.window.set_pos(real_pos.x, real_pos.y);
+            window.pos = real_pos;
+        }
+        if window.dim != rect.dim {
+            window.window.set_size(rect.dim.x, rect.dim.y);
+            window.dim = rect.dim;
+        }
     }
 }
 
@@ -271,11 +279,20 @@ impl Renderer {
 
         mem::swap(&mut windows, &mut self.windows);
     }
+
+    /// Absolute position of the center of the screen.
+    pub fn center_pos(&self) -> Vec2I {
+        Vec2I {
+            x: self.screen_dim.x / 2 + self.screen_origin.x,
+            y: self.screen_dim.y / 2 + self.screen_origin.y,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct GLUtil {
-    window_pos: Vec2I,
+    window_pos_screen: Vec2I,
+    window_pos_abs: Vec2I,
     window_dim: Vec2I,
 }
 impl GLUtil {
@@ -284,7 +301,8 @@ impl GLUtil {
         RenderWindow { pos, dim, .. }: &RenderWindow,
     ) -> Self {
         Self {
-            window_pos: *pos - *screen_origin,
+            window_pos_abs: *pos,
+            window_pos_screen: *pos - *screen_origin,
             window_dim: *dim,
         }
     }
@@ -292,7 +310,8 @@ impl GLUtil {
     pub fn viewport(&self, mut pos: Vec2I, dim: Vec2I, relative_to: RelativeTo) {
         pos = match relative_to {
             RelativeTo::Window => pos,
-            RelativeTo::Screen => pos - self.window_pos,
+            RelativeTo::Screen => pos - self.window_pos_screen,
+            RelativeTo::Absolute => pos - self.window_pos_abs,
         };
         unsafe {
             gl::Viewport(pos.x, self.window_dim.y - pos.y - dim.y, dim.x, dim.y);
@@ -304,6 +323,7 @@ impl GLUtil {
 pub enum RelativeTo {
     Window,
     Screen,
+    Absolute,
 }
 #[derive(Debug, Clone, Copy)]
 pub enum Anchor {

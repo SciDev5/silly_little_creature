@@ -63,6 +63,9 @@ impl<const N: usize> Sprite<N> {
             );
         }
     }
+    pub fn current_dims(&self) -> Vec2I {
+        self.textures[self.current_tex].get_dimensions()
+    }
 }
 
 impl<const N: usize> Renderable for Sprite<N> {

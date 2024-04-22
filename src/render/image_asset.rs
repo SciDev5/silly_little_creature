@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use image::io::Reader as ImageReader;
+use image::{io::Reader as ImageReader, DynamicImage};
 
 use crate::util::Vec2I;
 
@@ -18,6 +18,9 @@ impl ImageAsset {
             .decode()
             .unwrap();
 
+        Self::from_dynamicimage(img)
+    }
+    pub fn from_dynamicimage(img: DynamicImage) -> Self {
         Self {
             dims: Vec2I::new(img.width() as i32, img.height() as i32),
             data: img
