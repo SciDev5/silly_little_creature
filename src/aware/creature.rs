@@ -36,6 +36,10 @@ pub struct Creature {
 
     last_pos: Vec2I,
     last_end_pos: Vec2I,
+
+    screen_center: Vec2I,
+
+    catch_count: u32,
 }
 
 impl Creature {
@@ -53,12 +57,14 @@ impl Creature {
                 include_imageasset!("../assets/empty.png"),
                 include_imageasset!("../assets/creature/creature_shocked.png"),
             ])),
+            screen_center: renderer.center_pos(),
             last_pos: renderer.center_pos(),
             last_end_pos: renderer.center_pos(),
             state: CreatureState::Idle {
                 pos: Some(renderer.center_pos()),
                 arms_raised: true,
             },
+            catch_count: 0,
         }
     }
 
@@ -94,22 +100,38 @@ impl Creature {
                 facing,
                 pos,
                 ..
-            } => self.shocked(pos, facing),
+            } => self.found(pos, facing),
+            CreatureState::Idle { .. } | CreatureState::Talking { .. } => self.hide(),
             _ => {}
         }
     }
-    fn shocked(&mut self, pos: Vec2I, facing: Facing) {
+    fn found(&mut self, pos: Vec2I, facing: Facing) {
+        self.catch_count += 1;
         self.state = CreatureState::Shocked {
             from: pos,
             to: facing,
             t_begin: SystemTime::now(),
-            following_state: Box::new(CreatureState::Idle {
-                pos: None,
-                arms_raised: false,
+            following_state: Box::new(CreatureState::Jumping {
+                from: None,
+                to: self.screen_center,
+                t_begin: SystemTime::now().checked_add(SHOCKED_TIME).unwrap(),
+                duration: Duration::from_millis(500),
+                following_state: Box::new(CreatureState::Idle {
+                    pos: None,
+                    arms_raised: false,
+                }),
             }),
         }
     }
     // fn get_sprite_location(&self, )
+
+    pub fn wants_to_talk(&self) -> Option<u32> {
+        if matches!(self.state, CreatureState::Idle { .. }) {
+            Some(self.catch_count)
+        } else {
+            None
+        }
+    }
 
     pub fn update(&mut self) {
         match &mut self.state {
@@ -122,13 +144,26 @@ impl Creature {
                         .checked_add(Duration::from_millis(if *peek {
                             rand::thread_rng().gen_range(250..=750)
                         } else {
-                            rand::thread_rng().gen_range(5000..=15000)
+                            rand::thread_rng().gen_range(2000..=10000)
+                            // rand::thread_rng().gen_range(50..=150)
                         }))
                         .unwrap();
                 }
             }
             CreatureState::Idle { .. } => {}
-            CreatureState::Talking { .. } => {}
+            CreatureState::Talking {
+                t_begin_talking,
+                duration,
+                ..
+            } => {
+                if t_begin_talking.elapsed().unwrap_or(Duration::ZERO) > *duration {
+                    self.state = CreatureState::Idle {
+                        pos: None,
+                        arms_raised: false,
+                    };
+                    self.last_end_pos = self.last_pos;
+                }
+            }
             CreatureState::Jumping {
                 t_begin,
                 duration,
@@ -189,6 +224,7 @@ impl Creature {
                 pos,
                 arms_raised,
                 t_begin_talking,
+                ..
             } => {
                 sprite.pos.0 = *pos;
                 let mouth_open = t_begin_talking.elapsed().unwrap().as_millis() % 600 > 300;
@@ -216,7 +252,7 @@ impl Creature {
                 let p0 = (from.x as f64, from.y as f64);
                 let p3 = (to.x as f64, to.y as f64);
                 let p1 = (p0.0, p0.1 - JUMPPOWER * 3.0);
-                let p2 = (p3.0, p3.1 + JUMPPOWER * 3.0);
+                let p2 = (p3.0, p3.1 - JUMPPOWER * 3.0);
 
                 let x = (p0.0 * (v * v * v)
                     + 3.0 * p1.0 * (u * v * v)
@@ -289,6 +325,7 @@ enum CreatureState {
         pos: Vec2I,
         arms_raised: bool,
         t_begin_talking: SystemTime,
+        duration: Duration,
     },
     Jumping {
         from: Option<Vec2I>,

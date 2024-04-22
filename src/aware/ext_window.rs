@@ -94,7 +94,9 @@ pub fn iter_window_candidates() -> impl Iterator<Item = ExtWindowInfo> {
         .unwrap()
         .into_iter()
         .filter(|it| {
-            window_visible(it.hwnd) && it.window_name != "Settings" // settings was giving me trouble so im just going to explicitly exclude it
+            window_visible(it.hwnd) // window must be visible
+            && it.window_name != "Settings" // settings was giving me trouble so im just going to explicitly exclude it
+             && it.window_name.ends_with(".exe") // dont match the terminal
         })
         .filter_map(|HwndName { hwnd, window_name }| {
             let img = screenshot(hwnd).unwrap();

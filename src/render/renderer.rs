@@ -197,7 +197,7 @@ impl Renderer {
         ));
         glfw.window_hint(glfw::WindowHint::OpenGlForwardCompat(true));
 
-        glfw.window_hint(glfw::WindowHint::Floating(false));
+        glfw.window_hint(glfw::WindowHint::Floating(true));
         glfw.window_hint(glfw::WindowHint::Decorated(false));
         glfw.window_hint(glfw::WindowHint::TransparentFramebuffer(true));
 
