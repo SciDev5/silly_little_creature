@@ -31,6 +31,14 @@ pub struct Creature {
     ///     9: shocked
     /// ]
     sprite: RenderableId<Sprite<10>>,
+    /// Text textures:
+    /// [
+    ///     0: hidden
+    ///     1: "click me"
+    ///     2: 0 catch taunt
+    ///     3: 1+ catch taunt
+    /// ]
+    text_sprite: RenderableId<Sprite<4>>,
 
     state: CreatureState,
 
@@ -40,6 +48,7 @@ pub struct Creature {
     screen_center: Vec2I,
 
     catch_count: u32,
+    message_state: u32,
 }
 
 impl Creature {
@@ -57,19 +66,29 @@ impl Creature {
                 include_imageasset!("../assets/empty.png"),
                 include_imageasset!("../assets/creature/creature_shocked.png"),
             ])),
+            text_sprite: renderer.add_renderable(Sprite::new([
+                include_imageasset!("../assets/empty.png"),
+                include_imageasset!("../assets/text/click_me.png"),
+                include_imageasset!("../assets/text/0.png"),
+                include_imageasset!("../assets/text/1.png"),
+            ])),
             screen_center: renderer.center_pos(),
             last_pos: renderer.center_pos(),
             last_end_pos: renderer.center_pos(),
             state: CreatureState::Idle {
                 pos: Some(renderer.center_pos()),
                 arms_raised: true,
+                try_talk_at: SystemTime::now()
+                    .checked_add(Duration::from_millis(1000))
+                    .unwrap(),
             },
             catch_count: 0,
+            message_state: 0,
         }
     }
 
     pub fn hide(&mut self) {
-        let top_window = iter_window_candidates().skip(1).next().unwrap();
+        let top_window = iter_window_candidates().next().unwrap();
         let (p, f) = find_hiding_spot_in_window(&top_window);
 
         self.state = CreatureState::Jumping {
@@ -107,6 +126,7 @@ impl Creature {
     }
     fn found(&mut self, pos: Vec2I, facing: Facing) {
         self.catch_count += 1;
+        self.message_state = 0;
         self.state = CreatureState::Shocked {
             from: pos,
             to: facing,
@@ -119,18 +139,37 @@ impl Creature {
                 following_state: Box::new(CreatureState::Idle {
                     pos: None,
                     arms_raised: false,
+                    try_talk_at: SystemTime::now()
+                        .checked_add(SHOCKED_TIME)
+                        .unwrap()
+                        .checked_add(Duration::from_millis(300))
+                        .unwrap(),
                 }),
             }),
         }
     }
-    // fn get_sprite_location(&self, )
 
-    pub fn wants_to_talk(&self) -> Option<u32> {
-        if matches!(self.state, CreatureState::Idle { .. }) {
-            Some(self.catch_count)
-        } else {
-            None
-        }
+    fn start_talking(&mut self) {
+        let id = match (self.catch_count, self.message_state) {
+            (0, 0) => {
+                self.message_state = 1;
+                2
+            }
+            (0, 1) => 1,
+            (_, 0) => {
+                self.message_state = 1;
+                3
+            }
+            (_, 1) => 1,
+            (_, _) => unreachable!(),
+        };
+        self.state = CreatureState::Talking {
+            pos: self.last_pos,
+            arms_raised: rand::thread_rng().gen_bool(0.65),
+            t_begin_talking: SystemTime::now(),
+            duration: Duration::from_millis(3000),
+            id,
+        };
     }
 
     pub fn update(&mut self) {
@@ -150,7 +189,11 @@ impl Creature {
                         .unwrap();
                 }
             }
-            CreatureState::Idle { .. } => {}
+            CreatureState::Idle { try_talk_at, .. } => {
+                if SystemTime::now() > *try_talk_at {
+                    self.start_talking();
+                }
+            }
             CreatureState::Talking {
                 t_begin_talking,
                 duration,
@@ -160,6 +203,11 @@ impl Creature {
                     self.state = CreatureState::Idle {
                         pos: None,
                         arms_raised: false,
+                        try_talk_at: SystemTime::now()
+                            .checked_add(Duration::from_millis(
+                                rand::thread_rng().gen_range(3000..6000),
+                            ))
+                            .unwrap(),
                     };
                     self.last_end_pos = self.last_pos;
                 }
@@ -188,10 +236,19 @@ impl Creature {
         }
     }
     pub fn update_for_render(&mut self, renderer: &mut Renderer) -> RectI {
-        let sprite = self.sprite.get_mut(renderer).unwrap();
-        sprite.pos.1 = RelativeTo::Absolute;
-        sprite.pos.2 = Anchor::Center;
+        {
+            let text_sprite = self.text_sprite.get_mut(renderer).unwrap();
+            text_sprite.pos.1 = RelativeTo::Absolute;
+            text_sprite.pos.2 = Anchor::BottomCenter;
+            text_sprite.set_current_tex_index(0);
+        }
+        {
+            let sprite = self.sprite.get_mut(renderer).unwrap();
+            sprite.pos.1 = RelativeTo::Absolute;
+            sprite.pos.2 = Anchor::Center;
+        }
 
+        let sprite = self.sprite.get_mut(renderer).unwrap();
         match &self.state {
             CreatureState::Hiding {
                 target_window,
@@ -211,7 +268,9 @@ impl Creature {
                     8 // hidden
                 })
             }
-            CreatureState::Idle { pos, arms_raised } => {
+            CreatureState::Idle {
+                pos, arms_raised, ..
+            } => {
                 if let Some(pos) = *pos {
                     sprite.pos.0 = pos;
                 }
@@ -224,6 +283,7 @@ impl Creature {
                 pos,
                 arms_raised,
                 t_begin_talking,
+                id,
                 ..
             } => {
                 sprite.pos.0 = *pos;
@@ -234,6 +294,9 @@ impl Creature {
                     (false, true) => 2,
                     (true, true) => 3,
                 });
+
+                let text_sprite = self.text_sprite.get_mut(renderer).unwrap();
+                text_sprite.set_current_tex_index(*id);
             }
             CreatureState::Jumping {
                 from,
@@ -296,13 +359,28 @@ impl Creature {
         }
 
         {
+            let sprite = self.sprite.get_mut(renderer).unwrap();
             let pos = sprite.pos.0;
             self.last_pos = pos;
             let dim = sprite.current_dims();
-            RectI {
+            drop(sprite);
+            let text_sprite = self.text_sprite.get_mut(renderer).unwrap();
+            text_sprite.pos.0 = self.last_pos
+                + Vec2I {
+                    x: 0,
+                    y: -dim.y * 12 / 20,
+                };
+            let text_dim = text_sprite.current_dims();
+            let text_visible = text_dim.x > 10;
+            let mut rect = RectI {
                 pos: (pos - dim / 2),
                 dim,
+            };
+            if text_visible {
+                rect.extend_lr((text_dim.x - dim.x) / 2 + 5);
+                rect.extend_up(dim.y / 10 + text_dim.y + 5);
             }
+            rect
         }
     }
 }
@@ -320,12 +398,14 @@ enum CreatureState {
     Idle {
         pos: Option<Vec2I>,
         arms_raised: bool,
+        try_talk_at: SystemTime,
     },
     Talking {
         pos: Vec2I,
         arms_raised: bool,
         t_begin_talking: SystemTime,
         duration: Duration,
+        id: usize,
     },
     Jumping {
         from: Option<Vec2I>,

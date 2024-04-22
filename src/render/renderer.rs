@@ -17,6 +17,8 @@ pub struct RenderWindow {
     dim: Vec2I,
 }
 
+pub const SELF_WINDOW_TITLE: &str = "silly little creature :3";
+
 impl RenderWindow {
     fn new(renderer: &mut Renderer, pos: Vec2I, dim: Vec2I) -> Self {
         let (mut window, events) = renderer
@@ -24,7 +26,7 @@ impl RenderWindow {
             .create_window(
                 dim.x as u32,
                 dim.y as u32,
-                "silly little creature :3",
+                SELF_WINDOW_TITLE,
                 glfw::WindowMode::Windowed,
             )
             .expect("Failed to create GLFW window");

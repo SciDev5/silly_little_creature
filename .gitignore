@@ -3,3 +3,4 @@
 # ignore backup files
 **/*.kra~
 **/*.png~
+**/*.kra-autosave.kra

@@ -11,6 +11,16 @@ pub struct RectI {
     pub pos: Vec2I,
     pub dim: Vec2I,
 }
+impl RectI {
+    pub fn extend_up(&mut self, dist: i32) {
+        self.pos.y -= dist;
+        self.dim.y += dist;
+    }
+    pub fn extend_lr(&mut self, dist: i32) {
+        self.pos.x -= dist;
+        self.dim.x += 2 * dist;
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Vec2I {

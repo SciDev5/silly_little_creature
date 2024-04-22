@@ -6,7 +6,10 @@ use windows::Win32::{
     UI::WindowsAndMessaging::{GetWindowRect, IsWindow, IsWindowVisible},
 };
 
-use crate::util::{RectI, Vec2I};
+use crate::{
+    render::renderer::SELF_WINDOW_TITLE,
+    util::{RectI, Vec2I},
+};
 
 fn window_visible(hwnd: isize) -> bool {
     unsafe { IsWindowVisible(HWND(hwnd)).as_bool() }
@@ -96,7 +99,7 @@ pub fn iter_window_candidates() -> impl Iterator<Item = ExtWindowInfo> {
         .filter(|it| {
             window_visible(it.hwnd) // window must be visible
             && it.window_name != "Settings" // settings was giving me trouble so im just going to explicitly exclude it
-             && it.window_name.ends_with(".exe") // dont match the terminal
+             && it.window_name.as_str() != SELF_WINDOW_TITLE // dont match ourself
         })
         .filter_map(|HwndName { hwnd, window_name }| {
             let img = screenshot(hwnd).unwrap();
